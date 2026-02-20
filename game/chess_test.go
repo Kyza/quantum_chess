@@ -308,19 +308,6 @@ func TestSplitCannotCaptureDestination(t *testing.T) {
 	}
 }
 
-// TestSplitKingForbidden verifies kings cannot be split.
-func TestSplitKingForbidden(t *testing.T) {
-	b := NewBoard()
-	clearBoard(b)
-	b.Cells[7][4] = &Piece{Type: King, Color: White} // e1
-	b.Turn = White
-	from := sq('e', 1)
-	to := sq('e', 2)
-	if err := b.QuantumSplit(from, to); err == nil {
-		t.Error("expected error: king cannot be split")
-	}
-}
-
 // TestTripleSplit verifies splitting twice creates a 3-square superposition group.
 func TestTripleSplit(t *testing.T) {
 	b := NewBoard()
@@ -372,8 +359,8 @@ func TestNormalMoveCollapsesAttacker(t *testing.T) {
 	b := NewBoard()
 	clearBoard(b)
 	b.Cells[7][0] = &Piece{Type: Rook, Color: White} // a1
-	b.Cells[0][7] = &Piece{Type: King, Color: Black}  // h8 (need kings for IsInCheck)
-	b.Cells[7][4] = &Piece{Type: King, Color: White}  // e1
+	b.Cells[0][7] = &Piece{Type: King, Color: Black} // h8 (need kings for IsInCheck)
+	b.Cells[7][4] = &Piece{Type: King, Color: White} // e1
 	b.Turn = White
 
 	a1 := sq('a', 1)
@@ -602,8 +589,8 @@ func TestSplitGroupCleanedOnCapture(t *testing.T) {
 func TestCollapsePreservesEntanglement(t *testing.T) {
 	b := NewBoard()
 	clearBoard(b)
-	b.Cells[7][0] = &Piece{Type: Rook, Color: White}  // a1
-	b.Cells[7][7] = &Piece{Type: Rook, Color: White}  // h1
+	b.Cells[7][0] = &Piece{Type: Rook, Color: White} // a1
+	b.Cells[7][7] = &Piece{Type: Rook, Color: White} // h1
 	b.Cells[7][4] = &Piece{Type: King, Color: White}
 	b.Cells[0][4] = &Piece{Type: King, Color: Black}
 	b.Turn = White

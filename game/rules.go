@@ -234,7 +234,7 @@ func (b *Board) LegalMoves(sq Square) []Square {
 // LegalSplitTargets returns empty squares the piece at `sq` can quantum-split to.
 func (b *Board) LegalSplitTargets(sq Square) []Square {
 	p := b.piece(sq)
-	if p == nil || p.Color != b.Turn || p.Type == King {
+	if p == nil || p.Color != b.Turn {
 		return nil
 	}
 	// Non-capturing reachable squares: pseudo moves that land on empty squares.

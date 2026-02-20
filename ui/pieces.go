@@ -13,34 +13,16 @@ func PieceSymbol(p *game.Piece) string {
 	}
 	switch p.Type {
 	case game.King:
-		if p.Color == game.White {
-			return "♔"
-		}
 		return "♚"
 	case game.Queen:
-		if p.Color == game.White {
-			return "♕"
-		}
 		return "♛"
 	case game.Rook:
-		if p.Color == game.White {
-			return "♖"
-		}
 		return "♜"
 	case game.Bishop:
-		if p.Color == game.White {
-			return "♗"
-		}
 		return "♝"
 	case game.Knight:
-		if p.Color == game.White {
-			return "♘"
-		}
 		return "♞"
 	case game.Pawn:
-		if p.Color == game.White {
-			return "♙"
-		}
 		return "♟"
 	}
 	return "?"

@@ -27,9 +27,6 @@ func (b *Board) QuantumSplit(from, to Square) error {
 	if p.Color != b.Turn {
 		return fmt.Errorf("not your piece")
 	}
-	if p.Type == King {
-		return fmt.Errorf("king cannot be split")
-	}
 	if b.piece(to) != nil {
 		return fmt.Errorf("destination must be empty for quantum split")
 	}
