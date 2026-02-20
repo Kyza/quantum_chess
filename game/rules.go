@@ -200,48 +200,32 @@ func (b *Board) findKing(color Color) (Square, bool) {
 }
 
 // IsInCheck returns whether the given color's king is in check.
-// For a superposed king: in check only if ALL possible squares are attacked.
+// For a superposed king: in check if ANY possible square is attacked
+// (used as a warning; players are not forced to escape check).
 func (b *Board) IsInCheck(color Color) bool {
 	opp := opponent(color)
-	// Collect all king squares.
-	var kingSqs []Square
 	for r := 0; r < 8; r++ {
 		for c := 0; c < 8; c++ {
 			p := b.Cells[r][c]
 			if p != nil && p.Type == King && p.Color == color {
-				kingSqs = append(kingSqs, Square{r, c})
+				if b.IsAttacked(Square{r, c}, opp) {
+					return true
+				}
 			}
 		}
 	}
-	if len(kingSqs) == 0 {
-		return false
-	}
-	// In check only if ALL king squares are attacked.
-	for _, sq := range kingSqs {
-		if !b.IsAttacked(sq, opp) {
-			return false
-		}
-	}
-	return true
+	return false
 }
 
 // LegalMoves returns all legal destination squares for the piece at `sq`.
+// In quantum chess, players are not forced to escape check; all pseudo-legal
+// moves are legal (king capture ends the game instead of checkmate).
 func (b *Board) LegalMoves(sq Square) []Square {
 	p := b.piece(sq)
 	if p == nil || p.Color != b.Turn {
 		return nil
 	}
-
-	candidates := b.pseudoMoves(sq, false)
-	var legal []Square
-	for _, dst := range candidates {
-		clone := b.Clone()
-		clone.applyMoveUnchecked(sq, dst)
-		if !clone.IsInCheck(p.Color) {
-			legal = append(legal, dst)
-		}
-	}
-	return legal
+	return b.pseudoMoves(sq, false)
 }
 
 // LegalSplitTargets returns empty squares the piece at `sq` can quantum-split to.
@@ -353,6 +337,11 @@ func (b *Board) applyMoveUnchecked(from, to Square) {
 	// Trigger entanglement for capture.
 	if captured != nil {
 		b.TriggerEntanglement(to)
+		// King capture: game over.
+		if captured.Type == King {
+			b.GameOver = true
+			b.Winner = p.Color
+		}
 	}
 
 	// Move the piece.

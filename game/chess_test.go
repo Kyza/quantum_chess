@@ -35,8 +35,10 @@ func TestStartingPosition(t *testing.T) {
 	}
 }
 
-// TestScholarsMate plays a scholar's mate sequence and checks checkmate.
-// 1.e4 e5 2.Bc4 Nc6 3.Qh5 Nf6?? 4.Qxf7#
+// TestScholarsMate plays a scholar's mate sequence and verifies that Black's
+// king is in check after Qxf7. In quantum chess, checkmate is not a win
+// condition — the game continues until the king is actually captured.
+// 1.e4 e5 2.Bc4 Nc6 3.Qh5 Nf6?? 4.Qxf7+
 func TestScholarsMate(t *testing.T) {
 	b := NewBoard()
 
@@ -47,7 +49,7 @@ func TestScholarsMate(t *testing.T) {
 		{sq('b', 8), sq('c', 6)}, // 2...Nc6
 		{sq('d', 1), sq('h', 5)}, // 3. Qh5
 		{sq('g', 8), sq('f', 6)}, // 3...Nf6??
-		{sq('h', 5), sq('f', 7)}, // 4. Qxf7#
+		{sq('h', 5), sq('f', 7)}, // 4. Qxf7+
 	}
 
 	for i, mv := range moves {
@@ -56,8 +58,45 @@ func TestScholarsMate(t *testing.T) {
 		}
 	}
 
-	if !b.IsCheckmate(Black) {
-		t.Error("expected Black to be in checkmate after scholar's mate")
+	// Game is NOT over — the king has not been captured yet.
+	if b.GameOver {
+		t.Error("game should not be over after scholar's mate (king not captured)")
+	}
+	// Black king should be in check (warning display).
+	if !b.IsInCheck(Black) {
+		t.Error("expected Black king to be in check after Qxf7+")
+	}
+}
+
+// TestKingCapture verifies that capturing the king ends the game.
+func TestKingCapture(t *testing.T) {
+	b := NewBoard()
+
+	// Clear the board and set up a simple scenario:
+	// White queen on d1, Black king on e8 (its start square), nothing in between.
+	for r := 0; r < 8; r++ {
+		for c := 0; c < 8; c++ {
+			b.Cells[r][c] = nil
+		}
+	}
+	// Place white queen on d4 to reach e5.
+	b.Cells[4][3] = &Piece{Type: Queen, Color: White} // d4
+	// Place black king on e5 where white queen can capture it.
+	b.Cells[4][4] = &Piece{Type: King, Color: Black} // e5
+	b.Turn = White
+
+	from := Square{4, 3} // d4
+	to := Square{4, 4}   // e5
+
+	if err := b.ApplyMove(from, to); err != nil {
+		t.Fatalf("king capture move failed: %v", err)
+	}
+
+	if !b.GameOver {
+		t.Error("expected GameOver == true after king capture")
+	}
+	if b.Winner != White {
+		t.Errorf("expected Winner == White, got %v", b.Winner)
 	}
 }
 

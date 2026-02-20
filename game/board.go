@@ -54,6 +54,10 @@ type Board struct {
 
 	// Link-phase tracking
 	LinkedThisTurn bool
+
+	// Game-over state (set when a king is captured)
+	GameOver bool
+	Winner   Color // only valid when GameOver == true
 }
 
 // NewBoard creates a board in the standard chess starting position.
