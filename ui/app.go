@@ -20,6 +20,12 @@ func Run() {
 
 	statusLabel := widget.NewLabel("White's turn")
 
+	var splitBtn *widget.Button
+	splitBtn = widget.NewButton("Split", func() {
+		bw.ToggleSplitMode(splitBtn)
+	})
+	bw.SplitButton = splitBtn
+
 	var linkBtn *widget.Button
 	linkBtn = widget.NewButton("Link/Unlink", func() {
 		bw.ToggleLinkMode(linkBtn)
@@ -41,7 +47,7 @@ func Run() {
 		dialog.ShowInformation("Game Over", winner+" wins!", w)
 	}
 
-	toolbar := container.NewHBox(newGameBtn, linkBtn)
+	toolbar := container.NewHBox(newGameBtn, splitBtn, linkBtn)
 	content := container.NewBorder(toolbar, statusLabel, nil, nil, bw)
 
 	w.SetContent(content)

@@ -361,6 +361,27 @@ func (b *Board) findComponents(eg *EntanglementGroup) []*EntanglementGroup {
 	return components
 }
 
+// updateEntanglementSquare rewrites all references to `from` → `to`
+// in every entanglement group's Squares and Edges lists.
+// Called after a piece physically moves on the board.
+func (b *Board) updateEntanglementSquare(from, to Square) {
+	for _, eg := range b.EntanglementGroups {
+		for i, sq := range eg.Squares {
+			if sq == from {
+				eg.Squares[i] = to
+			}
+		}
+		for i, e := range eg.Edges {
+			if e[0] == from {
+				eg.Edges[i][0] = to
+			}
+			if e[1] == from {
+				eg.Edges[i][1] = to
+			}
+		}
+	}
+}
+
 // advanceTurn switches the active player and resets per-turn flags.
 func (b *Board) advanceTurn() {
 	if b.Turn == Black {

@@ -347,6 +347,8 @@ func (b *Board) applyMoveUnchecked(from, to Square) {
 	// Move the piece.
 	b.Cells[to.Row][to.Col] = p
 	b.Cells[from.Row][from.Col] = nil
+	// Update entanglement group records so lines follow the piece.
+	b.updateEntanglementSquare(from, to)
 
 	// Castling: also move the rook.
 	if p.Type == King {

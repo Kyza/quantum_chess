@@ -30,12 +30,15 @@ type uiState int
 
 const (
 	stateIdle uiState = iota
-	stateSelected
-	stateLinkA // waiting for first piece in link mode
-	stateLinkB // waiting for second piece
+	stateSelected      // piece picked for normal move (green highlights)
+	stateSplitIdle     // split mode active, waiting to pick a piece
+	stateSplitSelected // piece picked for split (purple highlights)
+	stateLinkA         // waiting for first piece in link mode
+	stateLinkB         // waiting for second piece
 )
 
 const maxEntLines = 64
+const maxSuperLines = 32
 
 // ─── widget ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +57,7 @@ type BoardWidget struct {
 	OnStatusChange func(string)
 	OnGameOver     func(string)
 	LinkButton     *widget.Button
+	SplitButton    *widget.Button
 }
 
 // NewBoardWidget creates a BoardWidget for the given board.
@@ -67,6 +71,31 @@ func NewBoardWidget(b *game.Board) *BoardWidget {
 func (bw *BoardWidget) Reset() {
 	bw.Board = game.NewBoard()
 	bw.state = stateIdle
+	bw.legalMoves = nil
+	bw.splitTargets = nil
+	if bw.SplitButton != nil {
+		bw.SplitButton.SetText("Split")
+	}
+	if bw.LinkButton != nil {
+		bw.LinkButton.SetText("Link/Unlink")
+	}
+	bw.Refresh()
+	bw.notify()
+}
+
+// ToggleSplitMode is called by the Split button.
+func (bw *BoardWidget) ToggleSplitMode(btn *widget.Button) {
+	if bw.state == stateSplitIdle || bw.state == stateSplitSelected {
+		bw.state = stateIdle
+		btn.SetText("Split")
+		bw.legalMoves = nil
+		bw.splitTargets = nil
+		bw.Refresh()
+		bw.notify()
+		return
+	}
+	bw.state = stateSplitIdle
+	btn.SetText("Cancel Split")
 	bw.legalMoves = nil
 	bw.splitTargets = nil
 	bw.Refresh()
@@ -154,33 +183,24 @@ func (bw *BoardWidget) handleClick(sq game.Square) {
 		}
 		bw.selected = sq
 		bw.legalMoves = b.LegalMoves(sq)
-		bw.splitTargets = b.LegalSplitTargets(sq)
+		bw.splitTargets = nil
 		bw.state = stateSelected
 		bw.Refresh()
 
 	case stateSelected:
-		// Check if clicking a legal move square.
+		// Click a legal (green) square → normal move.
 		if bw.inList(sq, bw.legalMoves) {
 			err := b.ApplyMove(bw.selected, sq)
 			if err == nil {
 				bw.state = stateIdle
 				bw.legalMoves = nil
 				bw.splitTargets = nil
+				if bw.SplitButton != nil {
+					bw.SplitButton.SetText("Split")
+				}
 				bw.Refresh()
 				bw.notify()
 				bw.checkGameOver()
-				return
-			}
-		}
-		// Check quantum split.
-		if bw.inList(sq, bw.splitTargets) {
-			err := b.ApplyQuantumSplit(bw.selected, sq)
-			if err == nil {
-				bw.state = stateIdle
-				bw.legalMoves = nil
-				bw.splitTargets = nil
-				bw.Refresh()
-				bw.notify()
 				return
 			}
 		}
@@ -189,13 +209,55 @@ func (bw *BoardWidget) handleClick(sq game.Square) {
 		if p != nil && p.Color == b.Turn {
 			bw.selected = sq
 			bw.legalMoves = b.LegalMoves(sq)
-			bw.splitTargets = b.LegalSplitTargets(sq)
+			bw.splitTargets = nil
 			bw.Refresh()
 			return
 		}
 		// Otherwise cancel selection.
 		bw.state = stateIdle
 		bw.legalMoves = nil
+		bw.splitTargets = nil
+		bw.Refresh()
+
+	case stateSplitIdle:
+		// Pick a piece to split.
+		p := b.Cells[sq.Row][sq.Col]
+		if p == nil || p.Color != b.Turn {
+			return
+		}
+		bw.selected = sq
+		bw.splitTargets = b.LegalSplitTargets(sq)
+		bw.legalMoves = nil
+		bw.state = stateSplitSelected
+		bw.Refresh()
+
+	case stateSplitSelected:
+		// Click a purple square → quantum split.
+		if bw.inList(sq, bw.splitTargets) {
+			err := b.ApplyQuantumSplit(bw.selected, sq)
+			if err == nil {
+				bw.state = stateIdle
+				bw.legalMoves = nil
+				bw.splitTargets = nil
+				if bw.SplitButton != nil {
+					bw.SplitButton.SetText("Split")
+				}
+				bw.Refresh()
+				bw.notify()
+				return
+			}
+		}
+		// Click another friendly piece → re-select for split.
+		p := b.Cells[sq.Row][sq.Col]
+		if p != nil && p.Color == b.Turn {
+			bw.selected = sq
+			bw.splitTargets = b.LegalSplitTargets(sq)
+			bw.legalMoves = nil
+			bw.Refresh()
+			return
+		}
+		// Cancel split selection (stay in split mode).
+		bw.state = stateSplitIdle
 		bw.splitTargets = nil
 		bw.Refresh()
 	}
@@ -224,8 +286,13 @@ func (bw *BoardWidget) notify() {
 	if b.IsInCheck(b.Turn) {
 		msg += " — Check!"
 	}
-	if bw.state == stateLinkA || bw.state == stateLinkB {
-		msg += " (Link mode: pick pieces)"
+	switch bw.state {
+	case stateLinkA, stateLinkB:
+		msg += " (Link mode: pick two pieces)"
+	case stateSplitIdle:
+		msg += " (Split mode: pick a piece)"
+	case stateSplitSelected:
+		msg += " (Split mode: pick destination)"
 	}
 	bw.OnStatusChange(msg)
 }
@@ -265,7 +332,13 @@ func (bw *BoardWidget) CreateRenderer() fyne.WidgetRenderer {
 	for i := 0; i < maxEntLines; i++ {
 		l := canvas.NewLine(colEntangle)
 		l.StrokeWidth = 2
-		r.lines[i] = l
+		r.entLines[i] = l
+	}
+	colSuperLine := color.NRGBA{R: 0xAA, G: 0x00, B: 0xFF, A: 0xCC}
+	for i := 0; i < maxSuperLines; i++ {
+		l := canvas.NewLine(colSuperLine)
+		l.StrokeWidth = 2
+		r.superLines[i] = l
 	}
 	// Build objects list (back to front).
 	var objs []fyne.CanvasObject
@@ -276,7 +349,10 @@ func (bw *BoardWidget) CreateRenderer() fyne.WidgetRenderer {
 		objs = append(objs, r.hlRects[i])
 	}
 	for i := 0; i < maxEntLines; i++ {
-		objs = append(objs, r.lines[i])
+		objs = append(objs, r.entLines[i])
+	}
+	for i := 0; i < maxSuperLines; i++ {
+		objs = append(objs, r.superLines[i])
 	}
 	for i := 0; i < 64; i++ {
 		objs = append(objs, r.pieces[i])
@@ -291,13 +367,14 @@ func (bw *BoardWidget) CreateRenderer() fyne.WidgetRenderer {
 // ─── renderer ────────────────────────────────────────────────────────────────
 
 type boardRenderer struct {
-	bw      *BoardWidget
-	bgRects [64]*canvas.Rectangle
-	hlRects [64]*canvas.Rectangle
-	pieces  [64]*canvas.Text
-	ghosts  [64]*canvas.Text
-	lines   [maxEntLines]*canvas.Line
-	objects []fyne.CanvasObject
+	bw         *BoardWidget
+	bgRects    [64]*canvas.Rectangle
+	hlRects    [64]*canvas.Rectangle
+	pieces     [64]*canvas.Text
+	ghosts     [64]*canvas.Text
+	entLines   [maxEntLines]*canvas.Line
+	superLines [maxSuperLines]*canvas.Line
+	objects    []fyne.CanvasObject
 }
 
 func (r *boardRenderer) Objects() []fyne.CanvasObject { return r.objects }
@@ -388,7 +465,7 @@ func (r *boardRenderer) refresh(size fyne.Size) {
 			switch {
 			case checkSet[sq]:
 				hl = colCheck
-			case bw.state == stateSelected && sq == bw.selected:
+			case (bw.state == stateSelected || bw.state == stateSplitSelected) && sq == bw.selected:
 				hl = colSelected
 			case (bw.state == stateLinkB) && sq == bw.linkA:
 				hl = colLinkSel
@@ -425,11 +502,11 @@ func (r *boardRenderer) refresh(size fyne.Size) {
 		}
 	}
 
-	// Entanglement lines.
-	lineIdx := 0
+	// Entanglement lines (orange).
+	entIdx := 0
 	for _, eg := range b.EntanglementGroups {
 		for _, edge := range eg.Edges {
-			if lineIdx >= maxEntLines {
+			if entIdx >= maxEntLines {
 				break
 			}
 			a, bb := edge[0], edge[1]
@@ -437,18 +514,40 @@ func (r *boardRenderer) refresh(size fyne.Size) {
 			ay := (float32(a.Row) + 0.5) * ch
 			bx := (float32(bb.Col) + 0.5) * cw
 			by := (float32(bb.Row) + 0.5) * ch
-			r.lines[lineIdx].Position1 = fyne.NewPos(ax, ay)
-			r.lines[lineIdx].Position2 = fyne.NewPos(bx, by)
-			r.lines[lineIdx].StrokeColor = colEntangle
-			r.lines[lineIdx].Refresh()
-			lineIdx++
+			r.entLines[entIdx].Position1 = fyne.NewPos(ax, ay)
+			r.entLines[entIdx].Position2 = fyne.NewPos(bx, by)
+			r.entLines[entIdx].Refresh()
+			entIdx++
 		}
 	}
-	// Hide unused lines.
-	for i := lineIdx; i < maxEntLines; i++ {
-		r.lines[i].Position1 = fyne.NewPos(0, 0)
-		r.lines[i].Position2 = fyne.NewPos(0, 0)
-		r.lines[i].Refresh()
+	for i := entIdx; i < maxEntLines; i++ {
+		r.entLines[i].Position1 = fyne.NewPos(0, 0)
+		r.entLines[i].Position2 = fyne.NewPos(0, 0)
+		r.entLines[i].Refresh()
+	}
+
+	// Superposition lines (purple) — connect all squares within each group.
+	superIdx := 0
+	for _, sg := range b.SuperpositionGroups {
+		sqs := sg.Squares
+		for i := 0; i < len(sqs) && superIdx < maxSuperLines; i++ {
+			for j := i + 1; j < len(sqs) && superIdx < maxSuperLines; j++ {
+				a, bb := sqs[i], sqs[j]
+				ax := (float32(a.Col) + 0.5) * cw
+				ay := (float32(a.Row) + 0.5) * ch
+				bx := (float32(bb.Col) + 0.5) * cw
+				by := (float32(bb.Row) + 0.5) * ch
+				r.superLines[superIdx].Position1 = fyne.NewPos(ax, ay)
+				r.superLines[superIdx].Position2 = fyne.NewPos(bx, by)
+				r.superLines[superIdx].Refresh()
+				superIdx++
+			}
+		}
+	}
+	for i := superIdx; i < maxSuperLines; i++ {
+		r.superLines[i].Position1 = fyne.NewPos(0, 0)
+		r.superLines[i].Position2 = fyne.NewPos(0, 0)
+		r.superLines[i].Refresh()
 	}
 	_ = cw
 	_ = ch
