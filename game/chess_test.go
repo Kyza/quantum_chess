@@ -252,6 +252,387 @@ func TestEntanglement(t *testing.T) {
 	}
 }
 
+// ─── Superposition / Quantum Split tests ─────────────────────────────────────
+
+// clearBoard removes all pieces from the board and resets quantum state.
+func clearBoard(b *Board) {
+	for r := 0; r < 8; r++ {
+		for c := 0; c < 8; c++ {
+			b.Cells[r][c] = nil
+		}
+	}
+	b.SuperpositionGroups = make(map[int]*SuperpositionGroup)
+	b.EntanglementGroups = make(map[int]*EntanglementGroup)
+	b.EnPassantTarget = nil
+}
+
+// TestSplitCreatesGroup verifies a quantum split creates a SuperpositionGroup
+// with both squares registered.
+func TestSplitCreatesGroup(t *testing.T) {
+	b := NewBoard()
+	from := sq('b', 1) // knight
+	to := sq('c', 3)
+	if err := b.QuantumSplit(from, to); err != nil {
+		t.Fatal(err)
+	}
+	pFrom := b.Cells[from.Row][from.Col]
+	pTo := b.Cells[to.Row][to.Col]
+	if pFrom == nil || pFrom.SuperpositionID == 0 {
+		t.Error("from square should have a superposed piece")
+	}
+	if pTo == nil || pTo.SuperpositionID == 0 {
+		t.Error("to square should have a superposed piece")
+	}
+	if pFrom.SuperpositionID != pTo.SuperpositionID {
+		t.Error("both squares should share a group ID")
+	}
+	gid := pFrom.SuperpositionID
+	g := b.SuperpositionGroups[gid]
+	if g == nil {
+		t.Fatal("SuperpositionGroup not found")
+	}
+	if len(g.Squares) != 2 {
+		t.Errorf("expected 2 squares in group, got %d", len(g.Squares))
+	}
+}
+
+// TestSplitCannotCaptureDestination verifies you cannot split onto an occupied square.
+func TestSplitCannotCaptureDestination(t *testing.T) {
+	b := NewBoard()
+	// b1 knight → a3 is a legal knight move, but a3 has nothing; put a piece there.
+	b.Cells[5][0] = &Piece{Type: Pawn, Color: White} // a3
+	from := sq('b', 1)
+	to := sq('a', 3)
+	if err := b.QuantumSplit(from, to); err == nil {
+		t.Error("expected error: cannot split onto occupied square")
+	}
+}
+
+// TestSplitKingForbidden verifies kings cannot be split.
+func TestSplitKingForbidden(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[7][4] = &Piece{Type: King, Color: White} // e1
+	b.Turn = White
+	from := sq('e', 1)
+	to := sq('e', 2)
+	if err := b.QuantumSplit(from, to); err == nil {
+		t.Error("expected error: king cannot be split")
+	}
+}
+
+// TestTripleSplit verifies splitting twice creates a 3-square superposition group.
+func TestTripleSplit(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	// Place a rook on a1 so it can slide.
+	b.Cells[7][0] = &Piece{Type: Rook, Color: White} // a1
+	b.Turn = White
+
+	a1 := sq('a', 1)
+	a4 := sq('a', 4)
+	a6 := sq('a', 6)
+
+	// First split: a1 → a4
+	if err := b.QuantumSplit(a1, a4); err != nil {
+		t.Fatalf("first split failed: %v", err)
+	}
+	b.Turn = White // reset turn for test
+
+	// Second split from the ghost at a4 (the a1→a6 path is blocked by that ghost).
+	if err := b.QuantumSplit(a4, a6); err != nil {
+		t.Fatalf("second split failed: %v", err)
+	}
+
+	gid := b.Cells[a1.Row][a1.Col].SuperpositionID
+	g := b.SuperpositionGroups[gid]
+	if g == nil {
+		t.Fatal("superposition group missing")
+	}
+	if len(g.Squares) != 3 {
+		t.Errorf("expected 3 squares after two splits, got %d", len(g.Squares))
+	}
+}
+
+// TestSplitTargetsAreEmpty verifies LegalSplitTargets only returns empty squares.
+func TestSplitTargetsAreEmpty(t *testing.T) {
+	b := NewBoard()
+	// Knight on b1; some squares are blocked. All returned targets must be empty.
+	targets := b.LegalSplitTargets(sq('b', 1))
+	for _, t2 := range targets {
+		if b.Cells[t2.Row][t2.Col] != nil {
+			t.Errorf("split target %v is not empty", t2)
+		}
+	}
+}
+
+// TestNormalMoveCollapsesAttacker verifies that moving a superposed piece normally
+// collapses it: only one square is occupied afterward, no group remains.
+func TestNormalMoveCollapsesAttacker(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[7][0] = &Piece{Type: Rook, Color: White} // a1
+	b.Cells[0][7] = &Piece{Type: King, Color: Black}  // h8 (need kings for IsInCheck)
+	b.Cells[7][4] = &Piece{Type: King, Color: White}  // e1
+	b.Turn = White
+
+	a1 := sq('a', 1)
+	a4 := sq('a', 4)
+
+	if err := b.QuantumSplit(a1, a4); err != nil {
+		t.Fatal(err)
+	}
+	b.Turn = White
+
+	gid := b.Cells[a1.Row][a1.Col].SuperpositionID
+
+	// Force collapse to a1 then make a normal move from a1.
+	b.CollapseToSquare(gid, a1)
+
+	// Now the rook is classical on a1; move it to a2.
+	if err := b.ApplyMove(a1, sq('a', 2)); err != nil {
+		t.Fatalf("normal move failed: %v", err)
+	}
+
+	// No superposition group should remain.
+	if len(b.SuperpositionGroups) != 0 {
+		t.Errorf("expected no superposition groups, got %d", len(b.SuperpositionGroups))
+	}
+	// a1 should be empty, a2 occupied.
+	if b.Cells[a1.Row][a1.Col] != nil {
+		t.Error("a1 should be empty after move")
+	}
+	if b.Cells[sq('a', 2).Row][sq('a', 2).Col] == nil {
+		t.Error("a2 should be occupied after move")
+	}
+}
+
+// TestAttackerCollapseSucceeds verifies that a superposed attacker can capture
+// when forced to collapse to the attacking square.
+// Setup: white rook on a5, split DOWN to a2. Capture target is a8 (UP).
+// Ghost at a2 does not block the a5→a8 path.
+func TestAttackerCollapseSucceeds(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[4][4] = &Piece{Type: King, Color: White} // e5 — away from files used
+	b.Cells[0][4] = &Piece{Type: King, Color: Black} // e8
+	b.Cells[3][0] = &Piece{Type: Rook, Color: White} // a5
+	b.Turn = White
+
+	a5 := sq('a', 5)
+	a2 := sq('a', 2)
+	if err := b.QuantumSplit(a5, a2); err != nil {
+		t.Fatalf("split failed: %v", err)
+	}
+	b.Turn = White
+
+	// Black pawn on a8.
+	b.Cells[0][0] = &Piece{Type: Pawn, Color: Black}
+	a8 := sq('a', 8)
+
+	// Force collapse to a5 (attacker square) → capture must succeed.
+	completed, err := b.ApplyMoveCollapseTo(a5, a8, a5)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !completed {
+		t.Error("expected move to complete when attacker collapses to attacking square")
+	}
+	if b.Cells[a8.Row][a8.Col] == nil {
+		t.Error("rook should be on a8 after successful capture")
+	}
+	if b.Cells[a5.Row][a5.Col] != nil {
+		t.Error("a5 should be empty after rook moved away")
+	}
+}
+
+// TestAttackerCollapseFails verifies that a superposed attacker's move fails
+// when it collapses to its other ghost square instead.
+// Same setup as above; collapse to a2 (not a5) → move must fail.
+func TestAttackerCollapseFails(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[4][4] = &Piece{Type: King, Color: White} // e5
+	b.Cells[0][4] = &Piece{Type: King, Color: Black} // e8
+	b.Cells[3][0] = &Piece{Type: Rook, Color: White} // a5
+	b.Turn = White
+
+	a5 := sq('a', 5)
+	a2 := sq('a', 2)
+	if err := b.QuantumSplit(a5, a2); err != nil {
+		t.Fatalf("split failed: %v", err)
+	}
+	b.Turn = White
+
+	b.Cells[0][0] = &Piece{Type: Pawn, Color: Black}
+	a8 := sq('a', 8)
+
+	// Force collapse to a2 (NOT the attacking square a5) → move must fail.
+	completed, err := b.ApplyMoveCollapseTo(a5, a8, a2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if completed {
+		t.Error("expected move to fail when attacker collapses away from attacking square")
+	}
+	// Black pawn should still be alive.
+	if b.Cells[a8.Row][a8.Col] == nil {
+		t.Error("black pawn should survive when attacker missed")
+	}
+	// Rook should be on a2 (where it collapsed), a5 empty.
+	if b.Cells[a2.Row][a2.Col] == nil {
+		t.Error("rook should be on a2 after collapsing there")
+	}
+	if b.Cells[a5.Row][a5.Col] != nil {
+		t.Error("a5 should be empty after collapse to a2")
+	}
+}
+
+// TestCaptureCollapsesSuperposedTarget verifies that capturing a superposed
+// piece collapses it: if it collapsed to the attacked square, capture succeeds;
+// if not, the target survives at its collapsed square.
+func TestCaptureCollapsesSuperposedTarget(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[7][4] = &Piece{Type: King, Color: White}
+	b.Cells[0][4] = &Piece{Type: King, Color: Black}
+
+	// Black rook in superposition on a8 and c8.
+	b.Cells[0][0] = &Piece{Type: Rook, Color: Black, SuperpositionID: 1}
+	b.Cells[0][2] = &Piece{Type: Rook, Color: Black, SuperpositionID: 1}
+	b.SuperpositionGroups[1] = &SuperpositionGroup{
+		ID:      1,
+		Squares: []Square{sq('a', 8), sq('c', 8)},
+		Piece:   Piece{Type: Rook, Color: Black},
+	}
+	b.nextSuperID = 2
+
+	// White queen on a1, can capture a8.
+	b.Cells[7][0] = &Piece{Type: Queen, Color: White}
+	b.Turn = White
+
+	a1 := sq('a', 1)
+	a8 := sq('a', 8)
+	c8 := sq('c', 8)
+
+	// Case A: target collapses to a8 (attacked) → capture succeeds.
+	bCopy := b.Clone()
+	bCopy.collapseToSquare(1, a8) // pre-collapse for determinism
+	// Now a8 is classical, c8 is empty. Queen captures.
+	if err := bCopy.ApplyMove(a1, a8); err != nil {
+		t.Fatalf("capture should succeed: %v", err)
+	}
+	if bCopy.Cells[a8.Row][a8.Col] == nil || bCopy.Cells[a8.Row][a8.Col].Color != White {
+		t.Error("white queen should be on a8 after successful capture")
+	}
+	if bCopy.Cells[c8.Row][c8.Col] != nil {
+		t.Error("c8 should be empty (ghost cleared by collapse)")
+	}
+
+	// Case B: target collapses to c8 (away from attack) → a8 empty, queen moves to empty square.
+	bCopy2 := b.Clone()
+	bCopy2.collapseToSquare(1, c8) // pre-collapse
+	if err := bCopy2.ApplyMove(a1, a8); err != nil {
+		t.Fatalf("move to now-empty a8 should succeed: %v", err)
+	}
+	if bCopy2.Cells[c8.Row][c8.Col] == nil || bCopy2.Cells[c8.Row][c8.Col].Color != Black {
+		t.Error("black rook should be on c8 after collapsing there")
+	}
+}
+
+// TestSplitPieceLegalMoves verifies that legal moves are reported for both
+// ghost squares of a superposed piece.
+func TestSplitPieceLegalMoves(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[7][4] = &Piece{Type: King, Color: White}
+	b.Cells[0][4] = &Piece{Type: King, Color: Black}
+	b.Cells[7][0] = &Piece{Type: Rook, Color: White}
+	b.Turn = White
+
+	a1 := sq('a', 1)
+	a4 := sq('a', 4)
+	b.QuantumSplit(a1, a4)
+	b.Turn = White
+
+	movesFromA1 := b.LegalMoves(a1)
+	movesFromA4 := b.LegalMoves(a4)
+
+	if len(movesFromA1) == 0 {
+		t.Error("superposed piece on a1 should have legal moves")
+	}
+	if len(movesFromA4) == 0 {
+		t.Error("superposed piece on a4 should have legal moves")
+	}
+}
+
+// TestSplitGroupCleanedOnCapture verifies the SuperpositionGroup is deleted
+// after the piece is fully captured/collapsed.
+func TestSplitGroupCleanedOnCapture(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[7][4] = &Piece{Type: King, Color: White}
+	b.Cells[0][4] = &Piece{Type: King, Color: Black}
+	// Black rook in superposition on a8 and c8 (manually set up).
+	b.Cells[0][0] = &Piece{Type: Rook, Color: Black, SuperpositionID: 1}
+	b.Cells[0][2] = &Piece{Type: Rook, Color: Black, SuperpositionID: 1}
+	b.SuperpositionGroups[1] = &SuperpositionGroup{
+		ID:      1,
+		Squares: []Square{sq('a', 8), sq('c', 8)},
+		Piece:   Piece{Type: Rook, Color: Black},
+	}
+	b.nextSuperID = 2
+
+	// Collapse to a8, then have white queen capture it.
+	b.CollapseToSquare(1, sq('a', 8))
+
+	b.Cells[7][0] = &Piece{Type: Queen, Color: White}
+	b.Turn = White
+	if err := b.ApplyMove(sq('a', 1), sq('a', 8)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(b.SuperpositionGroups) != 0 {
+		t.Errorf("SuperpositionGroups should be empty after capture, got %d", len(b.SuperpositionGroups))
+	}
+}
+
+// TestCollapsePreservesEntanglement verifies that an entanglement link on a
+// superposed piece survives collapse to the chosen square.
+func TestCollapsePreservesEntanglement(t *testing.T) {
+	b := NewBoard()
+	clearBoard(b)
+	b.Cells[7][0] = &Piece{Type: Rook, Color: White}  // a1
+	b.Cells[7][7] = &Piece{Type: Rook, Color: White}  // h1
+	b.Cells[7][4] = &Piece{Type: King, Color: White}
+	b.Cells[0][4] = &Piece{Type: King, Color: Black}
+	b.Turn = White
+
+	a1 := sq('a', 1)
+	a4 := sq('a', 4)
+	h1 := sq('h', 1)
+
+	// Split a1 rook.
+	b.QuantumSplit(a1, a4)
+	b.Turn = White // reset for Link
+	// Link a1 ghost to h1.
+	if err := b.Link(a1, h1); err != nil {
+		t.Fatal(err)
+	}
+	gid := b.Cells[a1.Row][a1.Col].SuperpositionID
+
+	// Collapse to a1 (the linked square).
+	b.CollapseToSquare(gid, a1)
+
+	pa1 := b.Cells[a1.Row][a1.Col]
+	if pa1 == nil {
+		t.Fatal("rook should be on a1 after collapse")
+	}
+	if len(pa1.EntanglementIDs) == 0 {
+		t.Error("rook on a1 should still be entangled to h1 after collapse")
+	}
+}
+
 // TestUnlinkSplit verifies that unlinking a bridge splits the group.
 func TestUnlinkSplit(t *testing.T) {
 	b := NewBoard()

@@ -94,6 +94,46 @@ func (b *Board) CollapseToSquare(groupID int, chosen Square) {
 	b.collapseToSquare(groupID, chosen)
 }
 
+// ApplyMoveCollapseTo is a test/deterministic helper: moves from→to but
+// forces the attacker's superposition (if any) to collapse to collapseTo
+// instead of randomly. If collapseTo != from, the move fails (turn consumed).
+// Returns (moveCompleted, error).
+func (b *Board) ApplyMoveCollapseTo(from, to, collapseTo Square) (bool, error) {
+	p := b.piece(from)
+	if p == nil {
+		return false, fmt.Errorf("no piece at %v", from)
+	}
+	if p.Color != b.Turn {
+		return false, fmt.Errorf("not your turn")
+	}
+	legal := b.LegalMoves(from)
+	found := false
+	for _, sq := range legal {
+		if sq == to {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false, fmt.Errorf("illegal move from %v to %v", from, to)
+	}
+	// Override attacker collapse deterministically.
+	if p.SuperpositionID != 0 {
+		sid := p.SuperpositionID
+		b.collapseToSquare(sid, collapseTo)
+		if collapseTo != from {
+			b.advanceTurn()
+			return false, nil
+		}
+		p = b.piece(from)
+		_ = p
+	}
+	// Re-use the tail of applyMoveUnchecked by calling it — but the piece is
+	// now classical so the superposition branch won't fire again.
+	b.applyMoveUnchecked(from, to)
+	return true, nil
+}
+
 func (b *Board) collapseToSquare(groupID int, chosen Square) {
 	sg, ok := b.SuperpositionGroups[groupID]
 	if !ok {

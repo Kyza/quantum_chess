@@ -300,15 +300,27 @@ func (b *Board) ApplyQuantumSplit(from, to Square) error {
 }
 
 // applyMoveUnchecked performs a move without legality checking (used internally).
-func (b *Board) applyMoveUnchecked(from, to Square) {
+// Returns true if the move was completed, false if the attacker collapsed away
+// (turn is still consumed in that case).
+func (b *Board) applyMoveUnchecked(from, to Square) bool {
 	p := b.piece(from)
 	if p == nil {
-		return
+		return false
 	}
 
-	// If piece is in superposition, collapse it first.
+	// If the attacker is in superposition, collapse it to a random square.
+	// If it collapses somewhere other than `from` the move fails — the piece
+	// wasn't actually there — but the turn is still consumed.
 	if p.SuperpositionID != 0 {
-		b.collapseToSquare(p.SuperpositionID, from)
+		sid := p.SuperpositionID
+		sg := b.SuperpositionGroups[sid]
+		chosen := sg.Squares[rand.Intn(len(sg.Squares))]
+		b.collapseToSquare(sid, chosen)
+		if chosen != from {
+			// Piece collapsed elsewhere — move doesn't happen.
+			b.advanceTurn()
+			return false
+		}
 		p = b.piece(from) // refresh after collapse
 	}
 
@@ -426,6 +438,7 @@ func (b *Board) applyMoveUnchecked(from, to Square) {
 	}
 
 	b.advanceTurn()
+	return true
 }
 
 // IsCheckmate returns whether the given color is in checkmate.
