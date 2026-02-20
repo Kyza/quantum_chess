@@ -1,6 +1,9 @@
 package game
 
-import "fmt"
+import (
+	"fmt"
+	"math/rand"
+)
 
 // pseudoMoves returns all squares a piece at `sq` can move to (ignoring check).
 // If captureOnly is true, only attacking squares are returned (used for check detection).
@@ -312,6 +315,17 @@ func (b *Board) applyMoveUnchecked(from, to Square) {
 	// Reset en passant target.
 	prevEP := b.EnPassantTarget
 	b.EnPassantTarget = nil
+
+	// If the destination holds a superposed piece, collapse it now.
+	// The piece collapses to a random square; if it collapses away from `to`
+	// the square is now empty and the move lands without a capture.
+	if target := b.piece(to); target != nil && target.SuperpositionID != 0 {
+		sid := target.SuperpositionID
+		sg := b.SuperpositionGroups[sid]
+		chosen := sg.Squares[rand.Intn(len(sg.Squares))]
+		b.collapseToSquare(sid, chosen)
+		// If it collapsed elsewhere, `to` is now empty — move proceeds normally.
+	}
 
 	// Determine if capture.
 	captured := b.piece(to)
